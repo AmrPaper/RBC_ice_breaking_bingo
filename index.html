@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robotics Bingo</title>
+<style>
+:root{--paper:#F3F6F9;--ink:#101B33;--blue:#2347C5;--tint:#DCE5FF;--line:#D3DCE8;--gold:#FFD23F;--muted:#5B6781}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--ink);background-color:var(--paper);background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:24px 24px;min-height:100vh}
+main{max-width:460px;margin:0 auto;padding:20px 14px 110px}
+h1{font-size:2rem;line-height:1.1;margin:8px 0 8px;font-weight:800;letter-spacing:-.02em}
+p{margin:0 0 14px;line-height:1.45}
+[hidden]{display:none!important}
+.muted{color:var(--muted)}
+input{width:100%;font:inherit;font-size:1.05rem;padding:12px;border:2px solid var(--ink);border-radius:6px;background:#fff;color:var(--ink)}
+button{font:inherit;cursor:pointer}
+.btn{padding:12px 18px;border:2px solid var(--ink);border-radius:6px;background:var(--blue);color:#fff;font-weight:700}
+.btn.ghost{background:#fff;color:var(--ink)}
+.link{background:none;border:0;color:var(--muted);text-decoration:underline;padding:8px 0;font-size:.9rem}
+:focus-visible{outline:3px solid var(--blue);outline-offset:2px}
+.err{color:#B3261E;min-height:1.3em;margin:6px 0 10px;font-size:.9rem}
+.stats{display:flex;justify-content:space-between;font-weight:700;margin:0 0 10px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.cell{min-height:96px;padding:6px;border:1.5px solid var(--ink);border-radius:6px;background:#fff;color:var(--ink);text-align:left;font-size:.76rem;line-height:1.2;display:flex;flex-direction:column;justify-content:space-between;gap:4px;overflow:hidden}
+.cell.signed{background:var(--tint);border-color:var(--blue)}
+.cell.win{background:var(--gold);border-color:var(--ink)}
+.who{font-weight:800;font-size:.85rem;color:var(--blue);word-break:break-word}
+.cell.win .who{color:var(--ink)}
+@media (prefers-reduced-motion:no-preference){.cell.signed .who{animation:pop .25s ease-out}}
+@keyframes pop{from{transform:scale(.6);opacity:0}to{transform:scale(1);opacity:1}}
+#banner{position:fixed;left:0;right:0;bottom:0;background:var(--gold);border-top:2px solid var(--ink);padding:14px 16px calc(14px + env(safe-area-inset-bottom,0px));text-align:center;font-weight:800}
+dialog{width:min(92vw,380px);border:2px solid var(--ink);border-radius:10px;padding:18px;background:#fff;color:var(--ink)}
+dialog::backdrop{background:rgba(16,27,51,.45)}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+</style>
+</head>
+<body>
+<main>
+  <section id="setup" hidden>
+    <h1>ROBOCON Ice Breaking Bingo!</h1>
+    <p>Talk to people. When someone fits a square, tap it and type their name. Each person can sign only one square. Fill a row, column, or diagonal to get bingo.</p>
+    <form id="setupform">
+      <label for="myname"><strong>Your name</strong></label>
+      <input id="myname" autocomplete="off" maxlength="30">
+      <div class="err" id="myerr"></div>
+      <button class="btn" type="submit">Get my card</button>
+    </form>
+  </section>
+
+  <section id="play" hidden>
+    <h1>Robotics Bingo</h1>
+    <p class="muted">Card for <strong id="me"></strong>. Tap a square when someone fits it.</p>
+    <div class="stats"><span id="count"></span><span id="lines"></span></div>
+    <div class="grid" id="grid"></div>
+    <button class="link" id="reset" type="button">Not you? Start over</button>
+  </section>
+</main>
+
+<div id="banner" hidden>Bingo! Show your card to a helper.</div>
+
+<dialog id="dlg">
+  <form id="sf">
+    <p><strong id="q"></strong></p>
+    <label for="name">Who fits this square?</label>
+    <input id="name" autocomplete="off" maxlength="30">
+    <div class="err" id="err"></div>
+    <div class="row">
+      <button class="btn" type="submit">Save name</button>
+      <button class="btn ghost" id="clear" type="button">Clear</button>
+      <button class="btn ghost" id="cancel" type="button">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+// Edit these prompts freely. You need at least 16 (N * N).
+const PROMPTS = [
+  "Has soldered something","Has an Arduino or Pi at home","Can explain a microcontroller","Has never written code",
+  "Has written Python","Has written C or C++","Has used a 3D printer","Built with LEGO Technic",
+  "Opened a gadget to see inside","Broke something fixing it","Plays the same game as you","From a different hometown",
+  "Studies a different course","Speaks 3 or more languages","Has a pet","Has been to a hackathon",
+  "Has watched Robocon","Wants to build a drone","Knows what a resistor does","Has used a multimeter",
+  "Likes cooking","Same birth month as you","Wearing the same color as you","Has a favorite movie robot",
+  "Has been in a club before","Plays an instrument","Wakes before 7 am by choice","Has never touched a circuit board",
+  "Has a robot idea to build","Has a favorite programming language"
+];
+const N = 4, KEY = "robotics-bingo-v1";
+const $ = id => document.getElementById(id);
+
+const LINES = (() => {
+  const idx = [...Array(N).keys()], L = [];
+  idx.forEach(r => L.push(idx.map(c => r * N + c)));
+  idx.forEach(c => L.push(idx.map(r => r * N + c)));
+  L.push(idx.map(i => i * N + i));
+  L.push(idx.map(i => i * N + (N - 1 - i)));
+  return L;
+})();
+
+let state = null, current = null;
+try { state = JSON.parse(localStorage.getItem(KEY)); } catch (e) {}
+function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+function shuffle(a) {
+  a = a.slice();
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+}
+const same = (a, b) => a.toLowerCase() === b.toLowerCase();
+
+function render() {
+  $("setup").hidden = !!state;
+  $("play").hidden = !state;
+  $("banner").hidden = true;
+  if (!state) return;
+  const signs = state.signs;
+  const wins = LINES.filter(l => l.every(i => signs[i]));
+  const winCells = new Set(wins.flat());
+  const grid = $("grid");
+  grid.textContent = "";
+  state.order.forEach((p, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "cell" + (signs[i] ? " signed" : "") + (winCells.has(i) ? " win" : "");
+    const t = document.createElement("span"); t.textContent = PROMPTS[p];
+    const w = document.createElement("span"); w.className = "who"; w.textContent = signs[i] || "";
+    b.append(t, w);
+    b.setAttribute("aria-label", PROMPTS[p] + (signs[i] ? ", signed by " + signs[i] : ", not signed yet"));
+    b.onclick = () => openSign(i);
+    grid.append(b);
+  });
+  $("me").textContent = state.me;
+  $("count").textContent = Object.keys(signs).length + " of " + N * N + " signed";
+  $("lines").textContent = wins.length ? wins.length + (wins.length === 1 ? " line" : " lines") : "No line yet";
+  $("banner").hidden = !wins.length;
+}
+
+function openSign(i) {
+  current = i;
+  $("q").textContent = PROMPTS[state.order[i]];
+  $("name").value = state.signs[i] || "";
+  $("err").textContent = "";
+  $("clear").hidden = !state.signs[i];
+  $("dlg").showModal();
+  $("name").focus();
+}
+
+$("sf").onsubmit = e => {
+  e.preventDefault();
+  const v = $("name").value.trim().replace(/\s+/g, " ");
+  if (!v) { $("err").textContent = "Type a name."; return; }
+  if (same(v, state.me)) { $("err").textContent = "That’s you. Find someone else."; return; }
+  const dup = Object.entries(state.signs).some(([k, n]) => +k !== current && same(n, v));
+  if (dup) { $("err").textContent = v + " already signed another square. Find a new person."; return; }
+  state.signs[current] = v;
+  save(); $("dlg").close(); render();
+};
+$("clear").onclick = () => { delete state.signs[current]; save(); $("dlg").close(); render(); };
+$("cancel").onclick = () => $("dlg").close();
+
+$("setupform").onsubmit = e => {
+  e.preventDefault();
+  const v = $("myname").value.trim();
+  if (!v) { $("myerr").textContent = "Type your name first."; return; }
+  state = { me: v, order: shuffle(PROMPTS.map((_, i) => i)).slice(0, N * N), signs: {} };
+  save(); render();
+};
+
+$("reset").onclick = () => {
+  if (!confirm("Start over with a new card? Your signatures will be cleared.")) return;
+  state = null;
+  try { localStorage.removeItem(KEY); } catch (e) {}
+  $("myname").value = "";
+  render();
+};
+
+render();
+</script>
+</body>
+</html>
